@@ -1,0 +1,172 @@
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Funciones para la multiplicación de matrices
+float** generarMatriz(float** matriz, int dimension);
+float** reservarMem(int filas, int columnas);
+void liberarMatriz(float** matriz, int dimension);
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+
+    int tamMatriz = 0;
+    float** m2;
+
+    int mirango, nprocesos;
+    MPI_Comm_rank(MPI_COMM_WORLD, &mirango);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocesos);
+
+    double inicio, fin;
+
+    if (mirango == 0) {
+        srand((unsigned int)time(NULL));
+
+        // Verifica que se proporcione el tamaño de la matriz como argumento
+        if (argc > 1) {
+            tamMatriz = atoi(argv[1]);
+        }
+        else {
+            printf("Se debe pasar un numero como argumento");
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        // Declaración e inicialización de matrices
+        float** m1 = reservarMem(tamMatriz, tamMatriz);
+        generarMatriz(m1, tamMatriz);
+        m2 = reservarMem(tamMatriz, tamMatriz);
+        generarMatriz(m2, tamMatriz);
+        inicio = MPI_Wtime();
+
+        // Envío del tamaño de la matriz y la matriz 2 a todos los procesos
+        for (int dest = 1; dest < nprocesos; dest++) {
+            MPI_Send(&tamMatriz, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
+            for (int i = 0; i < tamMatriz; i++) {
+                MPI_Send(m2[i], tamMatriz, MPI_FLOAT, dest, 1, MPI_COMM_WORLD);
+            }
+        }
+        liberarMatriz(m2, tamMatriz);
+
+        int fila = 0;
+        int enviadas = 0, recibidas = 0;
+
+        // Enviar n filas a cada proceso
+        for (int i = 1; i < nprocesos; i++) {
+            MPI_Send(m1[fila], tamMatriz, MPI_FLOAT, i, fila, MPI_COMM_WORLD);
+            enviadas++;
+            fila++;
+        }
+
+        MPI_Status status;
+        float** res = reservarMem(tamMatriz, tamMatriz);
+        float* resLocal = (float*)malloc(tamMatriz * sizeof(float));
+        int activo = 1;
+
+        // Recibir resultados de los procesos y ensamblar la matriz resultante
+        while (fila < tamMatriz) {
+            MPI_Recv(resLocal, tamMatriz, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+            recibidas++;
+            MPI_Send(&activo, 1, MPI_INT, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+
+            for (int i = 0; i < tamMatriz; i++) {
+                res[status.MPI_TAG][i] = resLocal[i];
+            }
+
+            MPI_Send(m1[fila], tamMatriz, MPI_FLOAT, status.MPI_SOURCE, fila, MPI_COMM_WORLD);
+            enviadas++;
+            fila++;
+        }
+        liberarMatriz(m1, tamMatriz);
+
+        // Esperar a recibir los resultados restantes
+        while (enviadas - recibidas != 0) {
+            MPI_Recv(resLocal, tamMatriz, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+            recibidas++;
+
+            for (int i = 0; i < tamMatriz; i++) {
+                res[status.MPI_TAG][i] = resLocal[i];
+            }
+        }
+
+        free(resLocal);
+
+        activo = 0;
+
+        // Enviar señal de inactividad a todos los procesos
+        for (int i = 1; i < nprocesos; i++) {
+            MPI_Send(&activo, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+        }
+
+        fin = MPI_Wtime();
+        liberarMatriz(res, tamMatriz);
+        printf("Tiempo de calculo con %d procesos: %f\n", nprocesos, fin - inicio);
+        fflush(stdout);
+    }
+    else {
+        // Procesos esclavos
+        MPI_Recv(&tamMatriz, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        m2 = (float**)malloc(tamMatriz * sizeof(float*));
+
+        // Recibir la matriz 2
+        for (int i = 0; i < tamMatriz; i++) {
+            m2[i] = (float*)malloc(tamMatriz * sizeof(float));
+            MPI_Recv(m2[i], tamMatriz, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+
+        MPI_Status status;
+        float* resultado = (float*)malloc(tamMatriz * sizeof(float));
+        float* filaM1 = (float*)malloc(tamMatriz * sizeof(float));
+        int activo = 1;
+
+        // Realizar la multiplicación de matrices hasta recibir señal de inactividad
+        while (activo == 1) {
+            MPI_Recv(filaM1, tamMatriz, MPI_FLOAT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+
+            // Realizar la multiplicación de matrices
+            for (int j = 0; j < tamMatriz; j++) {
+                resultado[j] = 0.0;
+                for (int k = 0; k < tamMatriz; ++k) {
+                    resultado[j] += filaM1[k] * m2[k][j];
+                }
+            }
+
+            MPI_Send(resultado, tamMatriz, MPI_FLOAT, 0, status.MPI_TAG, MPI_COMM_WORLD);
+            MPI_Recv(&activo, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+
+        free(filaM1);
+        free(resultado);
+        liberarMatriz(m2, tamMatriz);
+    }
+
+    MPI_Finalize();
+    return 0;
+}
+
+float** generarMatriz(float** matriz, int tamMatriz) {
+    // Genera números flotantes aleatorios entre 0 y 10
+    float liminf = 0.0, limsup = 10.0;
+    for (int i = 0; i < tamMatriz; ++i) {
+        for (int j = 0; j < tamMatriz; ++j) {
+            matriz[i][j] = liminf + (float)rand() / RAND_MAX * (limsup - liminf);
+        }
+    }
+    return matriz;
+}
+
+float** reservarMem(int filas, int columnas) {
+    //Reserva memoria
+    float** matriz = (float**)malloc(filas * sizeof(float*));
+    for (int i = 0; i < filas; i++) {
+        matriz[i] = (float*)malloc(columnas * sizeof(float));
+    }
+    return matriz;
+}
+void liberarMatriz(float** matriz, int dimension) {
+    //Libera memoria
+    for (int i = 0; i < dimension; i++) {
+        free(matriz[i]);
+    }
+    free(matriz);
+}

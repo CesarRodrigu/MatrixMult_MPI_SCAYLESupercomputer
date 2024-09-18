@@ -1,0 +1,10 @@
+Tiempo de calculo con 3 procesos: 23.047395
+Tiempo de calculo con 2 procesos: 44.598728
+Tiempo de calculo con 4 procesos: 15.707724
+Tiempo de calculo con 5 procesos: 13.058746
+Tiempo de calculo con 6 procesos: 10.162741
+Tiempo de calculo con 7 procesos: 9.371045
+Tiempo de calculo con 8 procesos: 7.953736
+Tiempo de calculo con 9 procesos: 7.676662
+Tiempo de calculo con 10 procesos: 7.010351
+Tiempo de calculo con 11 procesos: 6.988996
